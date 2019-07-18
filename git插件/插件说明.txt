@@ -1,0 +1,9 @@
+因UAT、PROD的Jenkins版本比较老，
+UAT:	Jenkins 2.19.1
+PROD:	Jenkins 2.21
+
+不敢轻易升级Jenkins到最新版本，容易升挂掉。
+一旦挂掉了，Jenkins上的好多构建任务不能执行，会被认定为重大生产事故的！
+
+因此只能采用手动安装git插件的方式。
+git-client-2.4.0.hpi、git-3.0.0.hpi两个插件在2.19.1、2.21可以正确安装和运行。
