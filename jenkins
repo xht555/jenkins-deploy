@@ -1,0 +1,223 @@
+#!/bin/bash
+source /etc/profile
+JAVA=`which java`
+
+###########################################################################################
+# 需要定义的变量
+# 以脚本传参的方式传入
+###########################################################################################
+function usage() {
+  echo "`date '+%F %T'` useage: ./script -c <cluster> -l <last node> -s <server IP> -n <jar name> -v <jar version> -i <micro service id> -e <eureka server> -p <application start parameters>"
+  echo "`date '+%F %T'` -c: 是否集群方式发包部署，可选值：true | false"
+  echo "`date '+%F %T'` -l：是否部署集群中的最后一个节点。非集群方式部署时，此值始终为【true】"
+  echo "`date '+%F %T'` -s：当前部署服务器的IP地址。会根据此IP地址在Eureka中注销服务"
+  echo "`date '+%F %T'` -n：部署jar包的名称，例如文件【edge-server-2.0.0-SNAPSHOT.jar】，【edge-server】是jar包的名称"
+  echo "`date '+%F %T'` -v：部署jar包的版本号，例如文件【edge-server-2.0.0-SNAPSHOT.jar】，【2.0.0-SNAPSHOT】是jar包的版本号"
+  echo "`date '+%F %T'` -i：微服务名称（ID），即spring.application.name的值"
+  echo "`date '+%F %T'` -e：Eureka注册中心的地址，例如：http://euraka.einwin.com:18761"
+  echo "`date '+%F %T'` -p：应用启动参数。例如：--spring.profiles.active=dev，支持传入多个启动参数，需要使用双引号包围起来"
+  exit 1
+}
+
+# 函数：判断是否传入必须的参数
+function isNull() {
+  # 参数允许的值只能是 true 或 false
+  if [ -z $2 ]; then
+    echo "`date '+%F %T'` 未传入必须的参数：-$1"
+    usage
+  fi
+}
+
+# 函数：判断是否为布尔值
+function isBoolean() {
+  isNull $1 $2
+  if [[ !($2 == "true" || $2 == "false") ]]; then
+    echo "`date '+%F %T'` -$1 参数允许的值只能是 true 或 false"
+    exit 1
+  fi
+}
+
+while getopts ":c:l:s:n:v:i:e:p:" arg
+do
+  case $arg in
+    c)
+      # 是否集群方式部署
+      CLUSTER=$OPTARG
+      ;;
+    l)
+      # 是否部署集群中的最后一个节点。非集群方式部署时，此值始终为【true】
+      LASTNODE=$OPTARG
+      ;;
+    s)
+      # 部署服务器的IP地址。会根据此IP地址在Eureka中注销服务
+      IPADDR=$OPTARG
+      ;;
+    n)
+      # 部署jar包的名称，例如文件【edge-server-2.0.0-SNAPSHOT.jar】，【edge-server】是jar包的名称
+      JAR_NAME=$OPTARG
+      ;;
+    v)
+      # 部署jar包的版本号，例如文件【edge-server-2.0.0-SNAPSHOT.jar】，【2.0.0-SNAPSHOT】是jar包的版本号
+      JAR_VERSION=$OPTARG
+      ;;
+    i)
+      # 微服务名称（ID），即spring.application.name的值
+      APPID=$OPTARG
+      ;;
+    e)
+      # Eureka注册中心的地址，例如：http://euraka.einwin.com:18761
+      EUREKA=$OPTARG
+      ;;
+    p)
+      # 应用启动参数。例如：--spring.profiles.active=dev，支持传入多个启动参数，需要使用双引号包围起来
+      PARAMS=$OPTARG
+      ;;
+    ?)
+      echo "`date '+%F %T'` 无效的参数！"
+      usage
+      ;;
+  esac
+done
+
+isBoolean c $CLUSTER
+isBoolean l $LASTNODE
+isNull s $IPADDR
+isNull n $JAR_NAME
+isNull v $JAR_VERSION
+isNull i $APPID
+isNull e $EUREKA
+
+if  [[ $CLUSTER == false ]]; then
+  LASTNODE=true
+fi
+
+# 函数：查询Jar应用PID
+function lookupPid() {
+  local pid=`ps -ef | grep $JAR_FINAL | grep -v grep | awk '{print $2}'`
+  echo $pid
+}
+
+# 路径定义及创建
+CD=`pwd`
+JAR_FINAL=$JAR_NAME-$JAR_VERSION.jar
+BAKDIR=$CD/jar-bak
+NEWDIR=$CD/jar-new
+mkdir -p $BAKDIR
+mkdir -p $NEWDIR
+
+# 判断Jenkin是否将构建好的JAR包上传到服务器，未发现新包则终止脚本
+if [ ! -f $NEWDIR/$JAR_FINAL ]; then
+  echo "`date '+%F %T'` 文件不存在：$NEWDIR/$JAR_FINAL"
+  echo "`date '+%F %T'` 请确认Jenkins任务是否正常!"
+  exit 1
+fi
+
+# 在Eureka注册中心匹配当前IP地址的服务实例ID
+# 然后注销该IP地址的服务实例，这样请求就不会再分发路由到当前服务器了
+echo "`date '+%F %T'` 开始问询Eureka注册中心关于服务【$APPID】的注册信息"
+
+STAT=`curl -I -m 2 -o /dev/null -s -w %{http_code} $EUREKA/eureka/apps/$APPID`
+if [[ $STAT != 200 && $STAT != 404 ]]; then
+  echo "`date '+%F %T'` Eureka注册中心查询失败！Http状态码：$STAT，地址：$EUREKA/eureka/apps/$APPID"
+  echo "`date '+%F %T'` 建议在目标部署服务器上执行【curl $EUREKA/eureka/apps/$APPID】查看具体的错误消息！"
+  exit 1
+fi
+
+curl -s $EUREKA/eureka/apps/$APPID --header "Accept: application/json" | jq '.application.instance[].instanceId' | while read row
+do
+  # 根据IP地址匹配服务实例ID
+  INSTANCEID=
+  if [[ ${row} == *$IPADDR* ]]; then
+    INSTANCEID=`echo ${row} | sed 's/"//g'`
+  fi
+
+  if [ -z $INSTANCEID ]; then
+    continue
+  fi
+
+  echo "`date '+%F %T'` 在Eureka注册中心查找到服务实例：$INSTANCEID"
+  touch $CD/.$APPID.tmp
+  STAT=`curl -I -m 3 -o /dev/null -s -w %{http_code} -X DELETE $EUREKA/eureka/apps/$APPID/$INSTANCEID`
+
+  if [[ $STAT == 200 ]]; then
+    echo "`date '+%F %T'` 服务在Eureka注册中心注销成功！"
+    break
+  fi
+
+  if [[ $STAT == 404 ]]; then
+    echo "`date '+%F %T'` 服务在Eureka注册中心注销成功！"
+    break
+  fi
+
+  echo "`date '+%F %T'` 服务在Eureka注册中心注销失败！"
+  exit 1
+done
+
+if [ -f $CD/.$APPID.tmp ]; then
+  rm -f $CD/.$APPID.tmp
+else
+  echo "`date '+%F %T'` Eureka注册中心查询结果：未查询到服务注册信息，将直接发版服务！"
+  echo "`date '+%F %T'` Eureka注册中心查询指令：curl -s $EUREKA/eureka/apps/$APPID --header \"Accept: application/json\""
+fi
+
+# 确认应用进程完全卸载
+PID=`lookupPid`
+if [ -n "$PID" ]; then
+  echo "`date '+%F %T'` 即将卸载 <$JAR_FINAL> 的进程：$PID"
+  kill -15 $PID
+  sleep 1
+
+  while true
+  do
+    PID=`lookupPid`
+    if [ -n "$PID" ]; then
+      echo "`date '+%F %T'` 等待卸载 <$JAR_FINAL> 的进程：$PID ..."
+      sleep 1
+    else
+      echo "`date '+%F %T'` 成功卸载 <$JAR_FINAL> 的进程。"
+      break
+    fi
+  done
+else
+  echo "`date '+%F %T'` 未发现 <$JAR_FINAL> 的进程，将直接启动服务！"
+fi
+
+# 旧包备份
+if [ -f $JAR_FINAL ]; then
+  # 获取旧包的文件创建时间戳
+  MTIME=`stat $JAR_FINAL | awk 'BEGIN { RS = "" ; FS = "\n" } {print $7}'`
+  MTIME=`echo $MTIME | sed 's/.*\([0-9]\{4\}-[0-9]\{1,2\}-[0-9]\{1,2\} [0-9]\{1,2\}:[0-9]\{1,2\}\).*/\1/g'`
+  MTIME=`echo $MTIME | sed 's/-//g' | sed 's/://g'`
+  MTIME=`echo $MTIME | awk '{print $1"-"$2}'`
+  #echo $MTIME
+
+  BAKJAR=$JAR_FINAL.$MTIME
+  #echo $BAKJAR
+  
+  mv $JAR_FINAL $BAKDIR/$BAKJAR
+fi
+#sleep 10
+
+# 移动新包，并启动服务
+mv $NEWDIR/$JAR_FINAL .
+# nohup $JAVA -Xms128m -Xmx256m -Xss256k -XX:ParallelGCThreads=2 -Djava.compiler=NONE -jar $JAR_FINAL $PARAMS > /dev/null 2>&1 &
+nohup $JAVA -Xms128m -Xmx256m -jar $JAR_FINAL $PARAMS > /dev/null 2>&1 &
+
+PID=`lookupPid`
+if [ -n "$PID" ]; then
+  echo "`date '+%F %T'` 正在启动 <$JAR_FINAL> 新进程：$PID ..."
+else
+  echo "`date '+%F %T'` 未能启动 <$JAR_FINAL> "
+  exit 1
+fi
+
+# 为避免服务波动，等待两分钟后才允许下一个节点发版
+COUNT=0
+if [[ $LASTNODE == false ]]; then
+  while [ $COUNT -lt 120 ];
+  do
+    let COUNT+=1
+    echo "`date '+%F %T'` 下一节点发版读秒：$COUNT"
+    sleep 1
+  done
+fi
