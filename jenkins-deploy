@@ -201,8 +201,10 @@ fi
 # 移动新包，并启动服务
 mv $NEWDIR/$JAR_FINAL .
 # nohup $JAVA -Xms128m -Xmx256m -Xss256k -XX:ParallelGCThreads=2 -Djava.compiler=NONE -jar $JAR_FINAL $PARAMS > /dev/null 2>&1 &
-nohup $JAVA -Xms128m -Xmx512m -jar $JAR_FINAL $PARAMS > /dev/null 2>&1 &
+nohup $JAVA -Xms256m -Xmx512m -jar $JAR_FINAL $PARAMS > /dev/null 2>&1 &
 
+# 等待两秒，解决脚本执行太快而查询不到服务进程的问题
+sleep 2
 PID=`lookupPid`
 if [ -n "$PID" ]; then
   echo "`date '+%F %T'` 正在启动 <$JAR_FINAL> 新进程：$PID ..."
