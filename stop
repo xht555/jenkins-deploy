@@ -1,0 +1,34 @@
+#!/bin/bash
+
+# 需要定义的变量
+JAR_NAME=edge-gateway
+JAR_VERSION=1.0.0-SNAPSHOT
+
+# 自动变量，无需理会
+JAR_FINAL=$JAR_NAME-$JAR_VERSION.jar
+
+# 函数：查询Jar应用PID
+function lookupPid() {
+  local pid=`ps -ef | grep $JAR_FINAL | grep -v grep | awk '{print $2}'`
+  echo $pid
+}
+
+PID=`lookupPid`
+
+# 确认应用进程完全卸载
+if [ -n "$PID" ]; then
+  echo "`date '+%F %T'` 即将卸载 <$JAR_FINAL> 的进程：$PID"
+  kill -15 $PID
+  sleep 1
+  while true
+  do
+    PID=`lookupPid`
+    if [ -n "$PID" ]; then
+      echo "`date '+%F %T'` 等待卸载 <$JAR_FINAL> 的进程：$PID ..."
+      sleep 1
+    else
+      echo "`date '+%F %T'` 成功卸载 <$JAR_FINAL> 的进程。"
+      break
+    fi
+  done
+fi
