@@ -7,7 +7,9 @@ JAVA=`which java`
 # 以脚本传参的方式传入
 ###########################################################################################
 function usage() {
-  echo "`date '+%F %T'` useage: ./script --cluster=true|false --lastnode=true|false --host=<IP> --port=<PORT> --name=<jar name> --version=<jar version> --appid=<micro service id> --domain=<service registry center domain:port> --runargs=<application start parameters>"
+  echo "`date '+%F %T'` useage:  ./jenkins-deploy --cluster=true|false --lastnode=true|false --host=<IP> --port=<PORT> --name=<jar name> --version=<jar version> --appid=<micro service id> --domain=<service registry center domain:port> --runargs=<application start parameters>"
+  echo "`date '+%F %T'` example: ./jenkins-deploy --cluster=true --lastnode=true --host=10.10.10.225 --port=18765 --name=edge-gateway --version=1.0.0-SNAPSHOT --appid=edge-gateway --domain=Nacos@http://dev.nacos.sunchis.cn:8848"
+  echo "`date '+%F %T'` 参数解释："
   echo "`date '+%F %T'` -c|--cluster: 是否集群方式发包部署，可选值：true | false"
   echo "`date '+%F %T'` -l|--lastnode：是否部署集群中的最后一个节点，可选值：true | false。非集群方式部署时，此值始终为【true】"
   echo "`date '+%F %T'` -h|--host：当前部署服务器的IP地址。会根据此IP地址在服务注册中心注销服务实例"
